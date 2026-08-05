@@ -25,5 +25,5 @@ rustls-native-certs = "0.8.4"
 rustls-pemfile = "2.2.0"
 solana-transaction = { version = "4", features = ["serde"], optional = true }
 thiserror = "2.0.18"
-tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }
+tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 x509-parser = "0.18.1"

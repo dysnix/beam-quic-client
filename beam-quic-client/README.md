@@ -61,6 +61,11 @@ If `signature` is omitted, Beam still submits the raw bytes but does not track t
 
 The client generates an ephemeral self-signed ECDSA client certificate for each client instance. The API key is placed in the certificate Common Name (`CN`), so it is not sent in the request frame body.
 
+Connection setup waits for the server's QUIC `HANDSHAKE_DONE` confirmation
+before any request stream can be opened. This ensures that an API key or client
+IP rejected during mutual TLS authorization is reported by the client instead
+of allowing a fire-and-forget send to return success first.
+
 ## Verified TLS
 
 Use `connect_with_config` when you want normal server certificate verification or a custom CA bundle.
