@@ -3,6 +3,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use base64::{Engine as _, engine::general_purpose};
@@ -17,9 +18,11 @@ use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::sleep};
 
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
+const HANDSHAKE_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(5);
+const HANDSHAKE_CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 #[derive(Debug, Clone)]
 pub struct BeamQuicClientConfig {
@@ -343,6 +346,7 @@ impl BeamQuicClient {
             .connect(self.cfg.endpoint, self.cfg.server_name.as_str())
             .map_err(|e| BeamQuicClientError::Tls(e.to_string()))?
             .await?;
+        wait_for_handshake_confirmation(&connection).await?;
         *guard = Some(connection.clone());
         Ok(connection)
     }
@@ -350,6 +354,32 @@ impl BeamQuicClient {
     async fn drop_connection(&self) {
         let mut guard = self.connection.lock().await;
         *guard = None;
+    }
+}
+
+async fn wait_for_handshake_confirmation(
+    connection: &Connection,
+) -> Result<(), BeamQuicClientError> {
+    let confirmation = async {
+        loop {
+            if connection.stats().frame_rx.handshake_done > 0 {
+                return Ok(());
+            }
+            if let Some(error) = connection.close_reason() {
+                return Err(BeamQuicClientError::Connect(error));
+            }
+            sleep(HANDSHAKE_CONFIRMATION_POLL_INTERVAL).await;
+        }
+    };
+
+    match tokio::time::timeout(HANDSHAKE_CONFIRMATION_TIMEOUT, confirmation).await {
+        Ok(result) => result,
+        Err(_) => {
+            connection.close(0_u32.into(), b"handshake confirmation timeout");
+            Err(BeamQuicClientError::Tls(format!(
+                "Beam QUIC server did not confirm the handshake within {HANDSHAKE_CONFIRMATION_TIMEOUT:?}"
+            )))
+        }
     }
 }
 
@@ -537,7 +567,137 @@ impl ServerCertVerifier for SkipServerVerification {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustls::{
+        DigitallySignedStruct, DistinguishedName, Error as RustlsError, SignatureScheme,
+        server::danger::{ClientCertVerified, ClientCertVerifier},
+    };
     use x509_parser::prelude::*;
+
+    #[derive(Debug)]
+    struct TestClientCertVerifier {
+        accept: bool,
+        provider: Arc<rustls::crypto::CryptoProvider>,
+    }
+
+    impl TestClientCertVerifier {
+        fn new(accept: bool) -> Self {
+            Self {
+                accept,
+                provider: Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+            }
+        }
+    }
+
+    impl ClientCertVerifier for TestClientCertVerifier {
+        fn offer_client_auth(&self) -> bool {
+            true
+        }
+
+        fn client_auth_mandatory(&self) -> bool {
+            true
+        }
+
+        fn root_hint_subjects(&self) -> &[DistinguishedName] {
+            &[]
+        }
+
+        fn verify_client_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _now: UnixTime,
+        ) -> Result<ClientCertVerified, RustlsError> {
+            if self.accept {
+                Ok(ClientCertVerified::assertion())
+            } else {
+                Err(RustlsError::General(
+                    "client certificate rejected".to_string(),
+                ))
+            }
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, RustlsError> {
+            rustls::crypto::verify_tls12_signature(
+                message,
+                cert,
+                dss,
+                &self.provider.signature_verification_algorithms,
+            )
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, RustlsError> {
+            rustls::crypto::verify_tls13_signature(
+                message,
+                cert,
+                dss,
+                &self.provider.signature_verification_algorithms,
+            )
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            self.provider
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+
+    fn test_server_config(accept_client_cert: bool) -> quinn::ServerConfig {
+        let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        let cert = params.self_signed(&key_pair).unwrap();
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
+        let verifier = Arc::new(TestClientCertVerifier::new(accept_client_cert));
+        let mut crypto = rustls::ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(vec![cert.der().clone()], key)
+            .unwrap();
+        crypto.alpn_protocols = vec![DEFAULT_ALPN.as_bytes().to_vec()];
+        quinn::ServerConfig::with_crypto(Arc::new(
+            quinn::crypto::rustls::QuicServerConfig::try_from(crypto).unwrap(),
+        ))
+    }
+
+    async fn connect_to_test_server(
+        accept_client_cert: bool,
+    ) -> Result<BeamQuicClient, BeamQuicClientError> {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let server = Endpoint::server(
+            test_server_config(accept_client_cert),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        )
+        .unwrap();
+        let server_addr = server.local_addr().unwrap();
+        tokio::spawn(async move {
+            let incoming = server.accept().await.expect("incoming connection");
+            match incoming.await {
+                Ok(connection) => {
+                    sleep(Duration::from_millis(50)).await;
+                    connection.close(0_u32.into(), b"test complete");
+                }
+                Err(error) => assert!(!accept_client_cert, "unexpected handshake error: {error}"),
+            }
+        });
+
+        BeamQuicClient::connect_with_config(BeamQuicClientConfig {
+            endpoint: server_addr,
+            api_key: "beam-key".to_string(),
+            server_name: "localhost".to_string(),
+            ca_cert_path: None,
+            danger_accept_invalid_server_cert: true,
+            alpn: DEFAULT_ALPN.to_string(),
+        })
+        .await
+    }
 
     #[test]
     fn generated_cert_contains_api_key_cn() {
@@ -559,5 +719,28 @@ mod tests {
             inferred_server_name("beam.example.com:9898"),
             "beam.example.com"
         );
+    }
+
+    #[tokio::test]
+    async fn waits_for_server_handshake_confirmation() {
+        let client = connect_to_test_server(true)
+            .await
+            .expect("authorized handshake must be confirmed");
+        let connection = client
+            .connection
+            .lock()
+            .await
+            .clone()
+            .expect("confirmed connection must be cached");
+        assert!(connection.stats().frame_rx.handshake_done > 0);
+    }
+
+    #[tokio::test]
+    async fn rejected_client_certificate_never_yields_a_usable_client() {
+        let error = match connect_to_test_server(false).await {
+            Ok(_) => panic!("rejected handshake must not create a client"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, BeamQuicClientError::Connect(_)));
     }
 }
