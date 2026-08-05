@@ -7,7 +7,7 @@ Rust client and shared protocol types for Beam QUIC `sendTransaction` and
 
 ```toml
 [dependencies]
-beam-quic-client = { git = "https://github.com/dysnix/beam-quic-client" }
+beam-quic-client = "0.1.1"
 ```
 
 Enable Solana transaction helpers when you want to pass a
@@ -15,8 +15,8 @@ Enable Solana transaction helpers when you want to pass a
 
 ```toml
 [dependencies]
-beam-quic-client = { git = "https://github.com/dysnix/beam-quic-client", features = ["solana-transaction"] }
+beam-quic-client = { version = "0.1.1", features = ["solana-transaction"] }
 ```
 
-See [crates/beam-quic-client/README.md](crates/beam-quic-client/README.md) for
+See [beam-quic-client/README.md](beam-quic-client/README.md) for
 usage examples.
