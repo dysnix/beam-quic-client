@@ -34,6 +34,7 @@ pub enum Provider {
     Falcon,
     Manka,
     Raiden,
+    Apex,
 }
 
 impl Provider {
@@ -45,6 +46,7 @@ impl Provider {
             Self::Falcon => "falcon",
             Self::Manka => "manka",
             Self::Raiden => "raiden",
+            Self::Apex => "apex",
         }
     }
 }

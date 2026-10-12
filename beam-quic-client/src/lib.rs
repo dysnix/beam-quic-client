@@ -55,6 +55,7 @@ pub enum Provider {
     Falcon,
     Manka,
     Raiden,
+    Apex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -425,6 +426,7 @@ impl From<Provider> for ProtocolProvider {
             Provider::Falcon => Self::Falcon,
             Provider::Manka => Self::Manka,
             Provider::Raiden => Self::Raiden,
+            Provider::Apex => Self::Apex,
         }
     }
 }
