@@ -53,6 +53,8 @@ pub enum Provider {
     Astralane,
     Nozomi,
     Falcon,
+    Manka,
+    Raiden,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -421,6 +423,8 @@ impl From<Provider> for ProtocolProvider {
             Provider::Astralane => Self::Astralane,
             Provider::Nozomi => Self::Nozomi,
             Provider::Falcon => Self::Falcon,
+            Provider::Manka => Self::Manka,
+            Provider::Raiden => Self::Raiden,
         }
     }
 }

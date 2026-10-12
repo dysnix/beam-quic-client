@@ -32,6 +32,8 @@ pub enum Provider {
     Astralane,
     Nozomi,
     Falcon,
+    Manka,
+    Raiden,
 }
 
 impl Provider {
@@ -41,6 +43,8 @@ impl Provider {
             Self::Astralane => "astralane",
             Self::Nozomi => "nozomi",
             Self::Falcon => "falcon",
+            Self::Manka => "manka",
+            Self::Raiden => "raiden",
         }
     }
 }
