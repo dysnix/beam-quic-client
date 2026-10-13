@@ -20,3 +20,7 @@ beam-quic-client = { version = "0.1.1", features = ["solana-transaction"] }
 
 See [beam-quic-client/README.md](beam-quic-client/README.md) for
 usage examples.
+
+The client enables QUIC keepalive with a 10-second interval so idle connections
+remain usable between submissions. Keepalive sends QUIC PING frames, not Solana
+transactions.

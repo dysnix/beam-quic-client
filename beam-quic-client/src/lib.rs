@@ -21,6 +21,7 @@ use rustls::{
 use tokio::{sync::Mutex, time::sleep};
 
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
+const DEFAULT_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const HANDSHAKE_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(5);
 const HANDSHAKE_CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
@@ -466,9 +467,13 @@ fn build_client_config(cfg: &BeamQuicClientConfig) -> Result<ClientConfig, BeamQ
             .map_err(|e| BeamQuicClientError::Tls(e.to_string()))?
     };
     crypto.alpn_protocols = vec![cfg.alpn.as_bytes().to_vec()];
-    Ok(ClientConfig::new(Arc::new(
+    let mut client = ClientConfig::new(Arc::new(
         QuicClientConfig::try_from(crypto).map_err(|e| BeamQuicClientError::Tls(e.to_string()))?,
-    )))
+    ));
+    let mut transport = quinn::TransportConfig::default();
+    transport.keep_alive_interval(Some(DEFAULT_KEEP_ALIVE_INTERVAL));
+    client.transport_config(Arc::new(transport));
+    Ok(client)
 }
 
 fn load_roots(path: Option<&PathBuf>) -> Result<RootCertStore, BeamQuicClientError> {
@@ -748,5 +753,67 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, BeamQuicClientError::Connect(_)));
+    }
+
+    #[tokio::test]
+    async fn idle_connection_stays_alive_and_is_reused_for_submission() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let mut server_config = test_server_config(true);
+        Arc::get_mut(&mut server_config.transport)
+            .unwrap()
+            .max_idle_timeout(Some(Duration::from_secs(12).try_into().unwrap()));
+        let server =
+            Endpoint::server(server_config, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let config = BeamQuicClientConfig {
+            endpoint: server.local_addr().unwrap(),
+            api_key: "beam-key".into(),
+            server_name: "localhost".into(),
+            ca_cert_path: None,
+            danger_accept_invalid_server_cert: true,
+            alpn: DEFAULT_ALPN.into(),
+        };
+        let (client, peer) = tokio::join!(BeamQuicClient::connect_with_config(config), async {
+            server.accept().await.unwrap().await.unwrap()
+        });
+        let client = client.unwrap();
+        let initial_connection = client.connection.lock().await.clone().unwrap();
+        let initial_id = initial_connection.stable_id();
+
+        // Exceed the negotiated idle timeout without any application requests.
+        sleep(Duration::from_secs(15)).await;
+        assert!(peer.close_reason().is_none(), "idle connection was closed");
+        assert!(peer.stats().frame_rx.ping > 0, "no keepalive PING received");
+        assert!(initial_connection.close_reason().is_none());
+
+        client
+            .send_transaction_fast_bytes(
+                [1, 2, 3],
+                SendTransactionFastOptions {
+                    provider: Provider::Bloxroute,
+                    mode: RoutingMode::Fastest,
+                    request_id: None,
+                    signature: None,
+                },
+            )
+            .await
+            .unwrap();
+        let mut stream = tokio::time::timeout(Duration::from_secs(2), peer.accept_uni())
+            .await
+            .unwrap()
+            .unwrap();
+        let bytes = stream.read_to_end(4096).await.unwrap();
+        let (header, transaction) = beam_quic_protocol::decode_request(
+            &bytes,
+            beam_quic_protocol::DEFAULT_MAX_FRAME_HEADER_BYTES,
+            beam_quic_protocol::DEFAULT_MAX_TRANSACTION_BYTES,
+        )
+        .unwrap();
+        assert_eq!(header.method, QuicMethod::SendTransactionFast);
+        assert_eq!(transaction, [1, 2, 3]);
+        assert_eq!(
+            client.connection.lock().await.as_ref().unwrap().stable_id(),
+            initial_id,
+            "submission reconnected instead of reusing the idle connection"
+        );
     }
 }

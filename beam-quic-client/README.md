@@ -66,6 +66,14 @@ before any request stream can be opened. This ensures that an API key or client
 IP rejected during mutual TLS authorization is reported by the client instead
 of allowing a fire-and-forget send to return success first.
 
+## Connection Keepalive
+
+QUIC keepalive is enabled by default with a 10-second interval. When a connection
+is idle, the transport sends QUIC PING frames to keep it usable between submissions.
+These are transport control packets, not Solana transactions or Beam submission
+requests. The setting applies to both submission methods and to connections created
+after a reconnect.
+
 ## Verified TLS
 
 Use `connect_with_config` when you want normal server certificate verification or a custom CA bundle.
