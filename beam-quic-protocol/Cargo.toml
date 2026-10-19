@@ -4,6 +4,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 version.workspace = true
+readme = "README.md"
 description = "Shared frame types for Beam QUIC transaction submission"
 keywords = ["beam", "quic", "solana"]
 categories = ["encoding", "network-programming"]

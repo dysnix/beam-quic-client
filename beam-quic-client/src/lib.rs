@@ -53,10 +53,7 @@ pub enum Provider {
     Bloxroute,
     Astralane,
     Nozomi,
-    Falcon,
     Manka,
-    Raiden,
-    Apex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -424,10 +421,7 @@ impl From<Provider> for ProtocolProvider {
             Provider::Bloxroute => Self::Bloxroute,
             Provider::Astralane => Self::Astralane,
             Provider::Nozomi => Self::Nozomi,
-            Provider::Falcon => Self::Falcon,
             Provider::Manka => Self::Manka,
-            Provider::Raiden => Self::Raiden,
-            Provider::Apex => Self::Apex,
         }
     }
 }
@@ -756,6 +750,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manka_regular_submission_receives_response() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let server = Endpoint::server(
+            test_server_config(true),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+        )
+        .unwrap();
+        let config = BeamQuicClientConfig {
+            endpoint: server.local_addr().unwrap(),
+            api_key: "beam-key".into(),
+            server_name: "localhost".into(),
+            danger_accept_invalid_server_cert: true,
+            ..Default::default()
+        };
+        let (client, peer) = tokio::join!(BeamQuicClient::connect_with_config(config), async {
+            server.accept().await.unwrap().await.unwrap()
+        });
+        let client = client.unwrap();
+        let (result, ()) = tokio::join!(
+            client.send_transaction_bytes(
+                b"tx",
+                SendTransactionOptions {
+                    provider: Some(Provider::Manka),
+                    mode: RoutingMode::Fastest,
+                    request_id: Some("manka-test".into()),
+                }
+            ),
+            async {
+                let (mut send, mut recv) = peer.accept_bi().await.unwrap();
+                let bytes = recv.read_to_end(4096).await.unwrap();
+                let (header, tx) = beam_quic_protocol::decode_request(&bytes, 4096, 1232).unwrap();
+                assert_eq!(header.provider, Some(ProtocolProvider::Manka));
+                assert_eq!(header.method, QuicMethod::SendTransaction);
+                assert_eq!(tx, b"tx");
+                let response = beam_quic_protocol::SubmitResponse {
+                    version: VERSION,
+                    request_id: header.request_id.unwrap(),
+                    ok: true,
+                    result: Some(beam_quic_protocol::SubmitResponseResult {
+                        signature: "sig".into(),
+                        provider: "manka".into(),
+                    }),
+                    error: None,
+                };
+                send.write_all(&beam_quic_protocol::encode_response(&response).unwrap())
+                    .await
+                    .unwrap();
+                send.finish().unwrap();
+            }
+        );
+        let result = result.unwrap();
+        assert_eq!(result.provider, "manka");
+        assert_eq!(result.signature, "sig");
+    }
+
+    #[tokio::test]
     async fn idle_connection_stays_alive_and_is_reused_for_submission() {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let mut server_config = test_server_config(true);
@@ -789,7 +839,7 @@ mod tests {
             .send_transaction_fast_bytes(
                 [1, 2, 3],
                 SendTransactionFastOptions {
-                    provider: Provider::Bloxroute,
+                    provider: Provider::Manka,
                     mode: RoutingMode::Fastest,
                     request_id: None,
                     signature: None,
@@ -809,6 +859,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(header.method, QuicMethod::SendTransactionFast);
+        assert_eq!(header.provider, Some(ProtocolProvider::Manka));
         assert_eq!(transaction, [1, 2, 3]);
         assert_eq!(
             client.connection.lock().await.as_ref().unwrap().stable_id(),

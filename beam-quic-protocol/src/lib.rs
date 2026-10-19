@@ -31,10 +31,7 @@ pub enum Provider {
     Bloxroute,
     Astralane,
     Nozomi,
-    Falcon,
     Manka,
-    Raiden,
-    Apex,
 }
 
 impl Provider {
@@ -43,10 +40,7 @@ impl Provider {
             Self::Bloxroute => "bloxroute",
             Self::Astralane => "astralane",
             Self::Nozomi => "nozomi",
-            Self::Falcon => "falcon",
             Self::Manka => "manka",
-            Self::Raiden => "raiden",
-            Self::Apex => "apex",
         }
     }
 }
@@ -180,6 +174,35 @@ mod tests {
         let (decoded, tx) = decode_request(&frame, 4096, 1232).unwrap();
         assert_eq!(decoded, header);
         assert_eq!(tx, b"tx");
+    }
+
+    #[test]
+    fn supported_providers_round_trip_for_both_methods() {
+        for provider in [
+            Provider::Bloxroute,
+            Provider::Astralane,
+            Provider::Nozomi,
+            Provider::Manka,
+        ] {
+            for method in [QuicMethod::SendTransaction, QuicMethod::SendTransactionFast] {
+                let header = SubmitRequestHeader {
+                    version: VERSION,
+                    request_id: None,
+                    method,
+                    provider: Some(provider),
+                    mode: RoutingMode::Fastest,
+                    signature: None,
+                };
+                let frame = encode_request(&header, b"transaction").unwrap();
+                let (decoded, tx) = decode_request(&frame, 4096, 1232).unwrap();
+                assert_eq!(decoded, header);
+                assert_eq!(tx, b"transaction");
+                assert_eq!(serde_json::to_value(provider).unwrap(), provider.as_str());
+            }
+        }
+        for removed in ["falcon", "raiden", "apex"] {
+            assert!(serde_json::from_value::<Provider>(serde_json::json!(removed)).is_err());
+        }
     }
 
     #[test]

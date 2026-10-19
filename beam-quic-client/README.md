@@ -16,7 +16,7 @@ let client = BeamQuicClient::connect(
 let result = client.send_transaction_bytes(
     tx_bytes,
     SendTransactionOptions {
-        provider: Some(Provider::Bloxroute),
+        provider: Some(Provider::Manka),
         mode: RoutingMode::Fastest,
         request_id: None,
     },
@@ -45,7 +45,7 @@ let client = BeamQuicClient::connect(
 client.send_transaction_fast_bytes(
     tx_bytes,
     SendTransactionFastOptions {
-        provider: Provider::Bloxroute,
+        provider: Provider::Manka,
         mode: RoutingMode::Fastest,
         request_id: None,
         signature: Some("OPTIONAL_TX_SIGNATURE".to_string()),
@@ -98,7 +98,7 @@ let client = BeamQuicClient::connect_with_config(BeamQuicClientConfig {
 let result = client.send_transaction_bytes(
     tx_bytes,
     SendTransactionOptions {
-        provider: Some(Provider::Bloxroute),
+        provider: Some(Provider::Manka),
         mode: RoutingMode::Fastest,
         request_id: None,
     },
@@ -110,3 +110,28 @@ let result = client.send_transaction_bytes(
 `ca_cert_path: None` uses native/system roots. Set `ca_cert_path` to a PEM CA bundle when the endpoint uses a private trust root.
 
 See `examples/send_transaction.rs`, `examples/send_transaction_fast.rs`, and `examples/send_transaction_tls.rs` for complete examples.
+
+## Providers and 0.2.0 migration
+
+Supported providers: `Bloxroute`, `Astralane`, `Nozomi`, and `Manka`.
+Use `Provider::Manka` and `RoutingMode::Fastest` for either submission method.
+Manka accepts up to 1232 wire bytes per transaction. Connect to Beam with your
+Beam API key; no Manka credentials are needed in the client.
+
+Version 0.2.0 removes `Falcon`, `Raiden`, and `Apex` from the public provider
+enums. Update matching application code and tip destinations before upgrading.
+The wire format remains version 1 (`beam-submit-v1`) for retained providers.
+
+Manka tip destinations:
+
+```text
+rfMKugRuMGjfeodunVPy4bzQBjnPsGozwjaV3QUeG2x
+rfMWRbvWQJ9933LY4GaQwdmoV8qqdkbUGFXkDDxtNvE
+rfMafrD8chZGcWFo3y7oxNjbgzLbGYio595jb8eJw1B
+rfMqGwHkxUxyA9AKLYBfA7ZG3Hwbt64jdDHr2PUMMF5
+rfMyAcoGpSuBgnCuy6akRUkcBbBNQ1SomSG2g6JRTC4
+```
+
+Include a System Program SOL transfer to one of these addresses. Regular
+submission validates the tip/provider match; fast submission skips synchronous
+tip validation and requires the explicit provider.
