@@ -36,6 +36,8 @@ Version 0.2.0 removes `Falcon`, `Raiden`, and `Apex` from the public provider
 enums. Update matching application code and tip destinations before upgrading.
 The wire format remains version 1 (`beam-submit-v1`) for retained providers.
 
+Manka minimum tip: **0.001 SOL (1,000,000 lamports)**.
+
 Manka tip destinations:
 
 ```text
